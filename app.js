@@ -23,7 +23,9 @@ const store = {
 // Lighter modes after a crash: 0 = GPU if available, 128-frame segments;
 // 1 = CPU, 128 frames; 2 = CPU, 64 frames (about 30% less memory, slightly less accurate).
 let level = Math.min(2, Number(store.get(LEVEL_KEY)) || 0);
-const modeFor = (l) => ({ preferWasm: l >= 1, segmentFrames: l >= 2 ? 64 : 128 });
+// Phones never use the GPU path: on an iPhone it crashed the whole device.
+const IS_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+const modeFor = (l) => ({ preferWasm: IS_PHONE || l >= 1, segmentFrames: l >= 2 ? 64 : 128, threads: IS_PHONE ? 2 : 4 });
 let crashNotice = null;
 try {
   const prev = JSON.parse(store.get(RUN_KEY) || "null");

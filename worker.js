@@ -90,6 +90,7 @@ self.onmessage = async (e) => {
     if (m.type === "load") await load();
     if (m.type === "analyze") {
       setSegmentFrames(m.segmentFrames || 128);
+      if (!backend && self.crossOriginIsolated) ort.env.wasm.numThreads = Math.min(m.threads || 4, navigator.hardwareConcurrency || 1);
       const t0 = performance.now();
       const r = await analyze(m.stereo, (cfg) => runnerFor(cfg, m.preferWasm), (label, frac) => post({ type: "progress", label, frac }));
       post({ type: "result", seconds: (performance.now() - t0) / 1000, backend, r },
