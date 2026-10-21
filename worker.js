@@ -13,19 +13,20 @@ const CACHE = "tune-check-models-v2";   // v2: models accept any segment length
 caches.delete("tune-check-models-v1").catch(() => {});
 const FILES = [MODELS.vocals.file, MODELS.karaoke.file];
 const TOTAL_BYTES = 119.5e6;
-let backend = null;          // execution provider that worked, reused for the next session
+let backend = null;          // execution provider of the latest session
+let wasmStarted = false;     // thread count can only be set before the runtime starts
 
 const post = (msg, transfer) => self.postMessage(msg, transfer || []);
-const modelUrl = (file) => new URL(`./models/${file}`, import.meta.url).href;
+const modelUrl = (path) => new URL(`./models/${path}`, import.meta.url).href;
 
 async function openCache() { try { return await caches.open(CACHE); } catch { return null; } }
 
 // Make sure a model is in the Cache API, downloading it with progress if needed.
-async function download(file, onBytes) {
-  const cache = await openCache(), url = modelUrl(file);
+async function download(path, onBytes) {
+  const cache = await openCache(), url = modelUrl(path);
   if (cache && (await cache.match(url))) return;
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Could not download ${file} (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(`Could not download ${path} (HTTP ${res.status})`);
   const total = Number(res.headers.get("content-length")) || 0;
   const reader = res.body.getReader();
   const parts = [];
@@ -35,31 +36,40 @@ async function download(file, onBytes) {
     if (done) break;
     parts.push(value); got += value.length; onBytes(got, total);
   }
-  if (cache) { try { await cache.put(url, new Response(new Blob(parts), { headers: { "content-type": "application/octet-stream" } })); } catch { /* quota: fetched again at analysis time */ } }
+  if (cache) { try { await cache.put(url, new Response(new Blob(parts), { headers: { "content-type": "application/octet-stream" } })); } catch { /* quota: fetched again next time */ } }
 }
 
-async function modelBytes(file) {
-  const cache = await openCache(), url = modelUrl(file);
+async function modelBytes(path) {
+  const cache = await openCache(), url = modelUrl(path);
   const hit = cache && (await cache.match(url));
   const res = hit || (await fetch(url));
   return new Uint8Array(await res.arrayBuffer());
 }
 
-async function createSession(file, preferWasm) {
-  const tries = backend ? [backend] : [...(self.navigator.gpu && !preferWasm ? ["webgpu"] : []), "wasm"];
-  let bytes = await modelBytes(file), lastErr;
-  for (const ep of tries) {
-    try {
-      const s = await ort.InferenceSession.create(bytes, {
-        executionProviders: [ep], graphOptimizationLevel: "all",
-        enableCpuMemArena: false, enableMemPattern: false, executionMode: "sequential",
-      });
-      backend = ep;
-      bytes = null;
-      return s;
-    } catch (e) { lastErr = e; }
+const SESSION_OPTS = { graphOptimizationLevel: "all", enableCpuMemArena: false, enableMemPattern: false, executionMode: "sequential" };
+
+// Fast mode: half-precision models on the GPU, only if the GPU supports 16-bit floats.
+let gpuF16 = null;
+async function gpuHasF16() {
+  if (gpuF16 === null) {
+    try { const a = await self.navigator.gpu?.requestAdapter(); gpuF16 = !!a && a.features.has("shader-f16"); } catch { gpuF16 = false; }
   }
-  throw lastErr;
+  return gpuF16;
+}
+
+async function createSession(cfg, fast) {
+  if (fast && (await gpuHasF16())) {
+    try {
+      const path = `fp16/${cfg.file}`;
+      await download(path, (g, t) => post({ type: "progress", label: "Downloading the fast-mode models", frac: t ? g / t : 0 }));
+      const s = await ort.InferenceSession.create(await modelBytes(path), { ...SESSION_OPTS, executionProviders: ["webgpu"] });
+      return { s, backend: "webgpu" };
+    } catch (e) { post({ type: "note", message: `Fast mode is unavailable here (${e.message || e}); using the CPU.` }); }
+  } else if (fast) {
+    post({ type: "note", message: "Fast mode needs a GPU with 16-bit support, which this browser doesn't offer; using the CPU." });
+  }
+  const s = await ort.InferenceSession.create(await modelBytes(cfg.file), { ...SESSION_OPTS, executionProviders: ["wasm"] });
+  return { s, backend: "wasm" };
 }
 
 async function load() {
@@ -70,8 +80,10 @@ async function load() {
   post({ type: "ready" });
 }
 
-async function runnerFor(cfg, preferWasm) {
-  let s = await createSession(cfg.file, preferWasm);
+async function runnerFor(cfg, fast) {
+  const made = await createSession(cfg, fast);
+  let s = made.s;
+  backend = made.backend;
   post({ type: "backend", backend });
   const run = async (data, dims) => {
     const out = await s.run({ [s.inputNames[0]]: new ort.Tensor("float32", data, dims) });
@@ -90,9 +102,10 @@ self.onmessage = async (e) => {
     if (m.type === "load") await load();
     if (m.type === "analyze") {
       setSegmentFrames(m.segmentFrames || 128);
-      if (!backend && self.crossOriginIsolated) ort.env.wasm.numThreads = Math.min(m.threads || 4, navigator.hardwareConcurrency || 1);
+      if (!wasmStarted && self.crossOriginIsolated) ort.env.wasm.numThreads = Math.min(m.threads || 4, navigator.hardwareConcurrency || 1);
+      wasmStarted = true;
       const t0 = performance.now();
-      const r = await analyze(m.stereo, (cfg) => runnerFor(cfg, m.preferWasm), (label, frac) => post({ type: "progress", label, frac }));
+      const r = await analyze(m.stereo, (cfg) => runnerFor(cfg, m.fast), (label, frac) => post({ type: "progress", label, frac }));
       post({ type: "result", seconds: (performance.now() - t0) / 1000, backend, r },
         [r.fUser.buffer, r.fSinger.buffer, r.dev.buffer, r.smooth.buffer, r.userAudio.buffer, r.singerAudio.buffer]);
     }

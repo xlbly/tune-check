@@ -9,34 +9,34 @@ let worker, ready = false, busy = false;
 let audioCtx = null, mediaRec = null, stream = null, chunks = [], recStart = 0, tick = null;
 let last = null;            // { r, recording (Float32Array @44.1k), duration }
 let playing = null;         // { src, start, offset }
-let currentBackend = null;
+let currentBackend = null, lastNote = "";
 
 // If the browser kills the tab mid-analysis (usually out of memory), the page reloads with
-// no error. A marker saved during the analysis lets the next load say what happened, and
-// switch from the GPU to the lighter CPU path if the GPU was in use.
-const RUN_KEY = "tc-running", LEVEL_KEY = "tc-light-level";
+// no error. A marker saved during the analysis lets the next load say what happened and
+// fall back to a lighter mode.
+const RUN_KEY = "tc-running", FAST_KEY = "tc-fast", LIGHT_KEY = "tc-light";
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } },
   del(k) { try { localStorage.removeItem(k); } catch { /* storage blocked */ } },
 };
-// Lighter modes after a crash: 0 = GPU if available, 128-frame segments;
-// 1 = CPU, 128 frames; 2 = CPU, 64 frames (about 30% less memory, slightly less accurate).
-let level = Math.min(2, Number(store.get(LEVEL_KEY)) || 0);
-// Phones never use the GPU path: on an iPhone it crashed the whole device.
 const IS_PHONE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-const modeFor = (l) => ({ preferWasm: IS_PHONE || l >= 1, segmentFrames: l >= 2 ? 64 : 128, threads: IS_PHONE ? 2 : 4 });
+// Fast mode runs half-precision models on the GPU. On phones it is opt-in: the first GPU
+// version brought down a whole iPhone. This one uses about a quarter of that memory.
+let fast = store.get(FAST_KEY) != null ? store.get(FAST_KEY) === "1" : !IS_PHONE;
+// Light mode (CPU, 64-frame segments) is switched on after a crash on the CPU path.
+let light = store.get(LIGHT_KEY) === "1";
+const mode = () => ({ fast, segmentFrames: !fast && light ? 64 : 128, threads: IS_PHONE ? 2 : 4 });
 let crashNotice = null;
 try {
   const prev = JSON.parse(store.get(RUN_KEY) || "null");
   if (prev) {
     store.del(RUN_KEY);
-    const next = prev.backend === "webgpu" ? Math.max(level, 1) : 2;
-    const changed = next > level;
-    level = next;
-    store.set(LEVEL_KEY, String(level));
-    crashNotice = `The last analysis stopped during "${prev.stage}", most likely because the browser ran out of memory. ` +
-      (changed ? "It will now run in a lighter mode that needs less memory but takes longer." : "Try a shorter snippet (10–20 seconds), and close other tabs.");
+    let what;
+    if (prev.fast) { fast = false; store.set(FAST_KEY, "0"); what = "Fast mode is now off."; }
+    else if (!light) { light = true; store.set(LIGHT_KEY, "1"); what = "It will now use a lighter, slightly less accurate mode."; }
+    else what = "Try a shorter snippet (10–20 seconds), and close other tabs.";
+    crashNotice = `The last analysis stopped during "${prev.stage}", most likely because the browser ran out of memory. ${what}`;
   }
 } catch { store.del(RUN_KEY); }
 
@@ -73,6 +73,7 @@ function startWorker() {
     const m = e.data;
     if (m.type === "download") setStatus("Downloading the models (about 120 MB, once)", m.got / m.total);
     if (m.type === "backend") currentBackend = m.backend;
+    if (m.type === "note") lastNote = m.message;
     if (m.type === "ready") {
       ready = true;
       statusBox.hidden = true;
@@ -80,10 +81,10 @@ function startWorker() {
       if (crashNotice) setError(crashNotice);
     }
     if (m.type === "progress") {
-      store.set(RUN_KEY, JSON.stringify({ stage: m.label, backend: currentBackend }));
-      const steps = ["Removing the instruments", "Separating your voice from the singer's", "Tracking pitch"];
+      store.set(RUN_KEY, JSON.stringify({ stage: m.label, fast }));
+      const steps = ["Downloading the fast-mode models", "Removing the instruments", "Separating your voice from the singer's", "Tracking pitch"];
       const i = Math.max(0, steps.indexOf(m.label));
-      setStatus(`${m.label}…`, (i + m.frac) / steps.length, "This runs on your device and can take a minute.");
+      setStatus(`${m.label}…`, i === 0 ? m.frac : (i - 1 + m.frac) / (steps.length - 1), "This runs on your device and can take a minute.");
     }
     if (m.type === "result") { store.del(RUN_KEY); statusBox.hidden = true; showResult(m); setIdle(); }
     if (m.type === "error") { store.del(RUN_KEY); setError(`Something went wrong: ${m.message}`); setIdle(); }
@@ -115,8 +116,8 @@ async function analyzeBuffer(arrayBuffer) {
     const mono = await toStereo44k(arrayBuffer);
     if (mono.length < SR * 2) { setError("That snippet is too short. Record at least a few seconds."); setIdle(); return; }
     last = { recording: mono, duration: mono.length / SR };
-    store.set(RUN_KEY, JSON.stringify({ stage: "Preparing the audio", backend: null }));
-    worker.postMessage({ type: "analyze", stereo: [mono.slice(), mono.slice()], ...modeFor(level) });
+    store.set(RUN_KEY, JSON.stringify({ stage: "Preparing the audio", fast }));
+    worker.postMessage({ type: "analyze", stereo: [mono.slice(), mono.slice()], ...mode() });
   } catch (err) {
     setError(`Could not read that audio: ${err.message || err}`);
     setIdle();
@@ -169,6 +170,10 @@ recBtn.addEventListener("click", () => {
   else startRecording();
 });
 
+const fastIn = $("fastIn");
+fastIn.checked = fast;
+fastIn.addEventListener("change", () => { fast = fastIn.checked; store.set(FAST_KEY, fast ? "1" : "0"); });
+
 $("fileIn").addEventListener("change", async (e) => {
   const f = e.target.files[0];
   e.target.value = "";
@@ -208,7 +213,8 @@ function showResult(m) {
   } else {
     box.innerHTML = "<p class='hint' style='margin-top:12px'>No stretch where you were clearly off. Nice.</p>";
   }
-  $("meta").textContent = `${r.comparedSeconds.toFixed(1)} s compared out of ${last.duration.toFixed(1)} s · analyzed in ${m.seconds.toFixed(0)} s using ${m.backend === "webgpu" ? "the GPU" : "the CPU"}${level ? ` (light mode ${level})` : ""}`;
+  $("meta").textContent = `${r.comparedSeconds.toFixed(1)} s compared out of ${last.duration.toFixed(1)} s · analyzed in ${m.seconds.toFixed(0)} s using ${m.backend === "webgpu" ? "the GPU (fast mode)" : "the CPU"}${!fast && light ? ", light mode" : ""}${lastNote ? `. ${lastNote}` : ""}`;
+  lastNote = "";
   $("results").hidden = false;
   drawChart();
 }

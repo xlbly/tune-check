@@ -49,6 +49,8 @@
     border-radius: 999px; padding: 8px 14px; cursor: pointer; }
   label.file input { position: absolute; opacity: 0; width: 1px; height: 1px; }
   .status { display: grid; gap: 8px; }
+  label.fast { display: flex; gap: 8px; align-items: center; font-size: .9rem; color: var(--muted); cursor: pointer; }
+  label.fast input { width: 18px; height: 18px; accent-color: var(--you); }
   .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .bar > div { height: 100%; width: 0; background: var(--you); transition: width .2s; }
   .status small { color: var(--muted); }
@@ -83,6 +85,7 @@
     <div class="row">
       <label class="file">Analyze a recording<input type="file" id="fileIn" accept="audio/*"></label>
     </div>
+    <label class="fast"><input type="checkbox" id="fastIn"> Fast mode (uses the GPU, experimental)</label>
   </section>
 
   <section class="card status" id="status">
