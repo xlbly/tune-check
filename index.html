@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tune Check</title>
+<meta name="theme-color" content="#14161f">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2214%22 fill=%22%23e03a3a%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" crossorigin="anonymous" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: one centered column, a big record control on top, results stacked below. */
+  :root {
+    --bg: #f5f6fa; --panel: #ffffff; --ink: #161927; --muted: #5d6478; --line: #dfe2ec;
+    --you: #3b5bdb; --singer: #8a90a3; --good: #2b9348; --warn: #c98a0b; --bad: #d03b3b; --rec: #e03a3a;
+    --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+    --body: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11131b; --panel: #1a1d29; --ink: #eceef6; --muted: #9aa1b5; --line: #2b2f3f;
+      --you: #7b96ff; --singer: #8d93a6; --good: #4cc26f; --warn: #e9b23a; --bad: #ff6b6b; --rec: #ff5252; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--body); }
+  main { max-width: 760px; margin: 0 auto;
+    padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left));
+    display: grid; gap: 20px; }
+  h1 { font: 700 2rem/1.1 var(--display); margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 4px 0 0; max-width: 60ch; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .recorder { display: grid; justify-items: center; gap: 12px; padding: 28px 18px; text-align: center; }
+  #recBtn { width: 112px; height: 112px; border-radius: 50%; border: 0; cursor: pointer; background: var(--rec);
+    color: #fff; font: 700 1.05rem var(--display); box-shadow: 0 0 0 8px color-mix(in srgb, var(--rec) 18%, transparent);
+    transition: transform .15s; }
+  #recBtn:active { transform: scale(.96); }
+  #recBtn:disabled { background: var(--muted); box-shadow: none; cursor: default; }
+  #recBtn.recording { border-radius: 26px; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 16px color-mix(in srgb, var(--rec) 10%, transparent); } }
+  @media (prefers-reduced-motion: reduce) { #recBtn.recording { animation: none; } }
+  #recBtn:focus-visible, button:focus-visible, label.file:focus-within { outline: 3px solid var(--you); outline-offset: 3px; }
+  .timer { font: 600 1.4rem var(--mono); font-variant-numeric: tabular-nums; }
+  .hint { color: var(--muted); font-size: .92rem; max-width: 48ch; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; }
+  button.ghost, label.file { font: 600 .92rem var(--body); color: var(--ink); background: transparent; border: 1px solid var(--line);
+    border-radius: 999px; padding: 8px 14px; cursor: pointer; }
+  label.file input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .status { display: grid; gap: 8px; }
+  .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--you); transition: width .2s; }
+  .status small { color: var(--muted); }
+  .err { color: var(--bad); font-weight: 700; }
+  .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat { border-radius: 10px; padding: 12px; background: color-mix(in srgb, var(--c) 12%, var(--panel)); }
+  .stat b { display: block; font: 700 1.8rem/1 var(--display); color: var(--c); font-variant-numeric: tabular-nums; }
+  .stat span { font-size: .85rem; color: var(--muted); }
+  .chartwrap { position: relative; width: 100%; }
+  canvas { width: 100%; display: block; touch-action: manipulation; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .85rem; color: var(--muted); margin-top: 8px; }
+  .legend i { display: inline-block; width: 12px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  ul.stretches { margin: 8px 0 0; padding-left: 20px; }
+  ul.stretches li { font-variant-numeric: tabular-nums; }
+  h2 { font: 700 1.15rem var(--display); margin: 0 0 10px; }
+  .play { display: flex; flex-wrap: wrap; gap: 8px; }
+  .meta { color: var(--muted); font-size: .82rem; }
+  @media (max-width: 420px) { .stat b { font-size: 1.45rem; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Tune Check</h1>
+    <p class="sub">Play a song on another speaker, sing along, and see moment by moment how close you are to the original singer.</p>
+  </header>
+
+  <section class="card recorder" aria-live="polite">
+    <button id="recBtn" disabled>Loading…</button>
+    <div class="timer" id="timer">0:00</div>
+    <p class="hint" id="hint">Hold the phone close to your mouth, with the song playing a few metres away. Snippets of 10–40 seconds work best.</p>
+    <div class="row">
+      <label class="file">Analyze a recording<input type="file" id="fileIn" accept="audio/*"></label>
+    </div>
+  </section>
+
+  <section class="card status" id="status">
+    <div><strong id="statusLabel">Downloading the models (about 120 MB, once)</strong></div>
+    <div class="bar"><div id="statusBar"></div></div>
+    <small id="statusNote">They stay on this device, so the next visit starts straight away. Nothing you record leaves your device.</small>
+  </section>
+
+  <section class="card" id="results" hidden>
+    <h2>How in tune you were</h2>
+    <div class="summary">
+      <div class="stat" style="--c: var(--good)"><b id="sIn">–</b><span>in tune (±50 cents)</span></div>
+      <div class="stat" style="--c: var(--warn)"><b id="sSlight">–</b><span>slightly off</span></div>
+      <div class="stat" style="--c: var(--bad)"><b id="sOff">–</b><span>off (over 1 semitone)</span></div>
+    </div>
+    <div class="chartwrap" style="margin-top:16px"><canvas id="chart" height="360" aria-label="Pitch of you and the singer over time, and the gap between them"></canvas></div>
+    <div class="legend">
+      <span><i style="background:var(--you)"></i>you</span>
+      <span><i style="background:var(--singer)"></i>original singer (an octave shift is ignored)</span>
+      <span><i style="background:var(--ink)"></i>gap in cents, smoothed</span>
+    </div>
+    <div id="stretchBox"></div>
+    <h2 style="margin-top:18px">Listen</h2>
+    <div class="play">
+      <button class="ghost" data-play="rec">Recording</button>
+      <button class="ghost" data-play="you">Your melody</button>
+      <button class="ghost" data-play="singer">Singer's melody</button>
+      <button class="ghost" data-play="overlay">Recording + both melodies</button>
+      <button class="ghost" data-play="stop">Stop</button>
+    </div>
+    <p class="meta" id="meta"></p>
+  </section>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
