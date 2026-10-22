@@ -45,7 +45,7 @@
   .timer { font: 600 1.4rem var(--mono); font-variant-numeric: tabular-nums; }
   .hint { color: var(--muted); font-size: .92rem; max-width: 48ch; }
   .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; }
-  button.ghost, label.file { font: 600 .92rem var(--body); color: var(--ink); background: transparent; border: 1px solid var(--line);
+  button.ghost, a.ghost, label.file { text-decoration: none; font: 600 .92rem var(--body); color: var(--ink); background: transparent; border: 1px solid var(--line);
     border-radius: 999px; padding: 8px 14px; cursor: pointer; }
   label.file input { position: absolute; opacity: 0; width: 1px; height: 1px; }
   .status { display: grid; gap: 8px; }
@@ -115,6 +115,7 @@
       <button class="ghost" data-play="singer">Singer's melody</button>
       <button class="ghost" data-play="overlay">Recording + both melodies</button>
       <button class="ghost" data-play="stop">Stop</button>
+      <a class="ghost" id="saveRec" hidden>Save recording</a>
     </div>
     <p class="meta" id="meta"></p>
   </section>

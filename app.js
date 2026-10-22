@@ -124,6 +124,17 @@ async function analyzeBuffer(arrayBuffer) {
   }
 }
 
+// Lets the user keep a take, e.g. to share one that was analyzed wrongly.
+function offerSave(blob) {
+  const a = $("saveRec");
+  if (a.href) URL.revokeObjectURL(a.href);
+  a.hidden = !blob;
+  if (!blob) { a.removeAttribute("href"); return; }
+  const ext = /mp4|aac/.test(blob.type) ? "m4a" : /ogg/.test(blob.type) ? "ogg" : "webm";
+  a.href = URL.createObjectURL(blob);
+  a.download = `tune-check-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.${ext}`;
+}
+
 async function startRecording() {
   ctx();
   stopPlayback();
@@ -141,6 +152,7 @@ async function startRecording() {
   mediaRec.onstop = async () => {
     stream.getTracks().forEach((t) => t.stop());
     const blob = new Blob(chunks, { type: mediaRec.mimeType });
+    offerSave(blob);
     analyzeBuffer(await blob.arrayBuffer());
   };
   mediaRec.start();
@@ -181,6 +193,7 @@ $("fileIn").addEventListener("change", async (e) => {
   ctx();
   stopPlayback();
   timerEl.textContent = "";
+  offerSave(null);
   analyzeBuffer(await f.arrayBuffer());
 });
 
