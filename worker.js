@@ -12,7 +12,7 @@ ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardw
 const CACHE = "tune-check-models-v2";   // v2: models accept any segment length
 caches.delete("tune-check-models-v1").catch(() => {});
 const FILES = [MODELS.vocals.file, MODELS.karaoke.file];
-const TOTAL_BYTES = 119.5e6;
+const TOTAL_BYTES = 119.5e6, FP16_BYTES = 59.8e6;
 let backend = null;          // execution provider of the latest session
 let wasmStarted = false;     // thread count can only be set before the runtime starts
 
@@ -61,7 +61,6 @@ async function createSession(cfg, fast) {
   if (fast && (await gpuHasF16())) {
     try {
       const path = `fp16/${cfg.file}`;
-      await download(path, (g, t) => post({ type: "progress", label: "Downloading the fast-mode models", frac: t ? g / t : 0 }));
       const s = await ort.InferenceSession.create(await modelBytes(path), { ...SESSION_OPTS, executionProviders: ["webgpu"] });
       return { s, backend: "webgpu" };
     } catch (e) { post({ type: "note", message: `Fast mode is unavailable here (${e.message || e}); using the CPU.` }); }
@@ -102,6 +101,15 @@ self.onmessage = async (e) => {
     if (m.type === "load") await load();
     if (m.type === "analyze") {
       setSegmentFrames(m.segmentFrames || 128);
+      // fetch both fast-mode models before starting, so progress runs in order
+      if (m.fast && (await gpuHasF16())) {
+        const got = {};
+        try {
+          for (const f of FILES) {
+            await download(`fp16/${f}`, (g) => { got[f] = g; post({ type: "progress", label: "Downloading the fast-mode models", frac: Object.values(got).reduce((a, b) => a + b, 0) / FP16_BYTES }); });
+          }
+        } catch { /* createSession reports the problem and falls back to the CPU */ }
+      }
       if (!wasmStarted && self.crossOriginIsolated) ort.env.wasm.numThreads = Math.min(m.threads || 4, navigator.hardwareConcurrency || 1);
       wasmStarted = true;
       const t0 = performance.now();
